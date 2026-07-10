@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod dc_bot;
 
 pub struct FromMinecraftEvent {
