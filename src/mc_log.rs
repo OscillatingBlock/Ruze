@@ -1,40 +1,44 @@
+use anyhow::Context;
 use linemux::MuxedLines;
-use std::env;
+use tracing::{error, info};
 
 use regex::Regex;
 use std::sync::OnceLock;
 
+use crate::event_handler;
 use tokio::sync::mpsc;
 
 use crate::discord_bot::*;
-use crate::event_handler::*;
 
-pub fn watch_mc_logs(mc_event_tx: mpsc::Sender<FromMinecraftEvent>) {
+///coordinator to watch Minecraft logs and forward them for processing
+pub async fn watch_mc_logs(
+    mc_event_tx: mpsc::Sender<FromMinecraftEvent>,
+    path: &str,
+) -> anyhow::Result<()> {
+    let mut watcher =
+        MuxedLines::new().context("Failed to initialize MuxedLines background worker")?;
+
+    info!("reading file {path:}");
+
+    watcher
+        .add_file(path)
+        .await
+        .context("Failed to add file to MuxedLines")?;
+
     tokio::spawn(async move {
-        let mut lines_ok = match MuxedLines::new() {
-            Ok(lines) => lines,
-            Err(e) => {
-                eprintln!("Failed to initialize MuxedLines background worker: {:?}", e);
-                return;
-            }
-        };
-        let path = env::var("LOG_PATH").unwrap_or_else(|_| {
-            eprintln!("❌ Error: No LOG_PATH environment variable found!");
-            std::process::exit(1);
-        });
-
-        println!("reading file {path:}");
-
-        if let Err(why) = lines_ok.add_file(path.clone()).await {
-            println!("failed to add file [{}] : {why:?}", path.clone())
+        while let Ok(Some(line)) = watcher.next_line().await {
+            process_log_line(line.line(), &mc_event_tx).await;
         }
-
-        while let Ok(Some(line)) = lines_ok.next_line().await {
-            if let Some(event) = parse_log_line(line.line()) {
-                handle_from_mc_to_dc(&mc_event_tx, event).await;
-            }
-        }
+        error!("Minecraft log watcher stream ended.");
     });
+
+    Ok(())
+}
+// Worker: handles the "Parse -> Relay" data pipeline.
+async fn process_log_line(raw_line: &str, tx: &mpsc::Sender<FromMinecraftEvent>) {
+    if let Some(event) = parse_log_line(raw_line) {
+        event_handler::relay_mc_event_to_discord(tx, event).await;
+    }
 }
 
 fn parse_log_line(line: &str) -> Option<MinecraftEvent> {

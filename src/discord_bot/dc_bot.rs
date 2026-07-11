@@ -28,11 +28,12 @@ pub struct Data {
 // Hardcoded user verification gate
 const OWNER_ID: u64 = 1314616785156444175;
 
-pub async fn start_dc_bot(
+pub async fn start_discord_bot(
     mc_event_rx: Receiver<FromMinecraftEvent>,
     dc_event_tx: Sender<FromDiscordEvent>,
     rcon_client: Arc<Mutex<RconClient>>,
 ) -> anyhow::Result<()> {
+    // init variables
     let bridge_channel_list = Arc::new(RwLock::new(None));
     let mc_status_client = McClient::new()
         .with_timeout(Duration::from_secs(5))
@@ -44,8 +45,11 @@ pub async fn start_dc_bot(
         mc_status_client,
         rcon_client,
     };
+
+    //init discord client
     let mut discord_client = init_discord_client(data).await?;
 
+    //spawn task to listen for minecraft events
     tokio::spawn({
         listen_for_mc_events(
             mc_event_rx,
@@ -54,6 +58,7 @@ pub async fn start_dc_bot(
         )
     });
 
+    // start the discord client to listen for discord events
     discord_client
         .start()
         .await
