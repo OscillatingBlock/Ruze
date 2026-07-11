@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::discord_bot::*;
 use mc_rcon::RconClient;
@@ -13,6 +13,7 @@ pub fn spawn_discord_to_mc_relay(
 ) {
     tokio::spawn(async move {
         while let Some(event) = dc_event_rx.recv().await {
+            info!("[Discord] <{}>: {}", event.username, event.content);
             let formatted_command = format!(
                 r#"tellraw @a {{"text":"[Discord] <{}>: {}", "color":"gold"}}"#,
                 event.username, event.content

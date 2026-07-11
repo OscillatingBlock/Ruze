@@ -1,7 +1,4 @@
-use crate::dc_bot::serenity::ChannelId;
 use poise::serenity_prelude as serenity;
-
-use crate::commands::*;
 use std::{collections::HashSet, env, sync::Arc, time::Duration};
 
 use tokio::sync::{
@@ -12,9 +9,13 @@ use tokio::sync::{
 use mc_rcon::RconClient;
 use rust_mc_status::McClient;
 
-use crate::discord_bot::{FromDiscordEvent, FromMinecraftEvent};
 use anyhow::Context as any_ctx;
 
+use crate::commands::*;
+use crate::dc_bot::serenity::ChannelId;
+use crate::discord_bot::{FromDiscordEvent, FromMinecraftEvent};
+
+use tracing::{debug, error, info, instrument};
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Clone)]
@@ -28,12 +29,14 @@ pub struct Data {
 // Hardcoded user verification gate
 const OWNER_ID: u64 = 1314616785156444175;
 
+#[instrument(skip_all, err)]
 pub async fn start_discord_bot(
     mc_event_rx: Receiver<FromMinecraftEvent>,
     dc_event_tx: Sender<FromDiscordEvent>,
     rcon_client: Arc<Mutex<RconClient>>,
 ) -> anyhow::Result<()> {
     // init variables
+    debug!("Initializing Discord bot shared data...");
     let bridge_channel_list = Arc::new(RwLock::new(None));
     let mc_status_client = McClient::new()
         .with_timeout(Duration::from_secs(5))
@@ -45,11 +48,15 @@ pub async fn start_discord_bot(
         mc_status_client,
         rcon_client,
     };
+    let token = env::var("DISCORD_TOKEN")
+        .context("Missing DISCORD_TOKEN environment variable in application environment")?;
 
     //init discord client
-    let mut discord_client = init_discord_client(data).await?;
+    debug!("Building Serenity client and Poise framework...");
+    let mut discord_client = init_discord_client(data, &token).await?;
 
     //spawn task to listen for minecraft events
+    info!("Spawning Minecraft-to-Discord background listener...");
     tokio::spawn({
         listen_for_mc_events(
             mc_event_rx,
@@ -59,6 +66,7 @@ pub async fn start_discord_bot(
     });
 
     // start the discord client to listen for discord events
+    info!("Discord client built. Connecting to Discord Gateway...");
     discord_client
         .start()
         .await
@@ -67,26 +75,27 @@ pub async fn start_discord_bot(
     Ok(())
 }
 
+#[instrument(skip_all)]
 async fn listen_for_mc_events(
     mut mc_event_rx: Receiver<FromMinecraftEvent>,
     bridge_channel_list: Arc<RwLock<Option<Vec<ChannelId>>>>,
     cache_http: Arc<serenity::Http>,
 ) {
+    debug!("Minecraft event listener is now active.");
     while let Some(event) = mc_event_rx.recv().await {
+        info!("[Minecraft] <{}>: {}", event.username, event.content);
         let formatted_message = format!("**{}**: {}", event.username, event.content);
 
-        // let current_targets = {
-        //     let lock = bridge_channel_list.read().await;
-        //     lock.clone()
-        // };
         let target_channels = bridge_channel_list.read().await.clone();
 
         if let Some(channels) = target_channels {
             broadcast_to_discord_channels(channels, cache_http.clone(), formatted_message);
         }
     }
+    debug!("Minecraft event listener loop has terminated.");
 }
 
+#[instrument(skip_all)]
 fn broadcast_to_discord_channels(
     target_channels: Vec<serenity::ChannelId>,
     cache_http: Arc<serenity::Http>,
@@ -100,15 +109,14 @@ fn broadcast_to_discord_channels(
 
         tokio::spawn(async move {
             if let Err(why) = target_channel.say(http_clone, &*msg_clone).await {
-                eprintln!("Failed to send message to discord channel {target_channel}: {why:?}");
+                error!("Failed to send message to discord channel {target_channel}: {why:?}");
             }
         });
     }
 }
 
-async fn init_discord_client(data: Data) -> anyhow::Result<serenity::client::Client> {
-    let token = env::var("DISCORD_TOKEN")
-        .context("Missing DISCORD_TOKEN environment variable in application environment")?;
+#[instrument(skip_all, err)]
+async fn init_discord_client(data: Data, token: &str) -> anyhow::Result<serenity::client::Client> {
     let intents =
         serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT;
     let framework = init_framework(data);
@@ -118,6 +126,7 @@ async fn init_discord_client(data: Data) -> anyhow::Result<serenity::client::Cli
     Ok(client)
 }
 
+#[instrument(skip_all)]
 fn init_framework(data: Data) -> poise::Framework<Data, Error> {
     let mut owners = HashSet::new();
     owners.insert(serenity::UserId::new(OWNER_ID));
@@ -132,8 +141,8 @@ fn init_framework(data: Data) -> poise::Framework<Data, Error> {
                     Duration::from_secs(3600),
                 ))),
                 additional_prefixes: vec![
-                    poise::Prefix::Literal("hey reze,"),
-                    poise::Prefix::Literal("hey reze"),
+                    poise::Prefix::Literal("hey makima,"),
+                    poise::Prefix::Literal("hey makima"),
                 ],
                 ..Default::default()
             },
@@ -143,6 +152,7 @@ fn init_framework(data: Data) -> poise::Framework<Data, Error> {
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
                 // Register slash commands globally instantly on login setup
+                info!("Discord bot is ready. Registering slash commands globally...");
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
                 Ok(data)

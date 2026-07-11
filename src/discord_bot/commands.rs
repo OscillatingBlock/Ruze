@@ -1,5 +1,6 @@
 use poise::serenity_prelude as serenity;
 use serenity::all::Mentionable;
+use tracing::info;
 
 use std::env;
 
@@ -19,35 +20,25 @@ pub async fn event_handler(
 ) -> Result<(), Error> {
     match event {
         serenity::FullEvent::Ready { data_about_bot, .. } => {
-            println!("Logged in as {}", data_about_bot.user.name)
+            info!("Logged in as {}", data_about_bot.user.name)
         }
         serenity::FullEvent::GuildMemberAddition { new_member } => {
-            let Some(system_channel) = new_member
+            let cached_channel = new_member
                 .guild_id
                 .to_guild_cached(ctx)
-                .and_then(|g| g.system_channel_id)
-            else {
-                return Ok(());
+                .and_then(|g| g.system_channel_id);
+            let system_channel = match cached_channel {
+                Some(channel_id) => channel_id,
+                None => {
+                    let guild = ctx.http.get_guild(new_member.guild_id).await?;
+                    let Some(channel_id) = guild.system_channel_id else {
+                        return Ok(()); // Guild genuinely has no system channel set
+                    };
+                    channel_id
+                }
             };
 
-            let welcome_embed = serenity::CreateEmbed::new()
-                .title("💥 A New Target Approaches! 💥")
-                .description(format!(
-                    "Welcome to the server, {}! Let's hope things don't get too... explosive. 🤫",
-                    new_member.mention()
-                ))
-                .color(0x9b59b6)
-                .thumbnail(
-                    "https://i.pinimg.com/originals/5d/15/4b/5d154b68de57a87600fe9b98d692802c.gif",
-                )
-                .footer(serenity::CreateEmbedFooter::new(format!(
-                    "Member Count: #{}",
-                    new_member
-                        .guild_id
-                        .to_guild_cached(ctx)
-                        .map(|g| g.member_count)
-                        .unwrap_or(0)
-                )));
+            let welcome_embed = create_welcome_embed(new_member, ctx);
 
             let message = serenity::CreateMessage::new().embed(welcome_embed);
             system_channel.send_message(&ctx.http, message).await?;
@@ -57,23 +48,46 @@ pub async fn event_handler(
                 let lock = data.target_channel_id_list.read().await;
                 lock.clone()
             };
+            let Some(target_channels) = current_targets else {
+                return Ok(());
+            };
 
-            if let Some(target_channels) = current_targets {
-                if target_channels.contains(&new_message.channel_id)
-                    && new_message.author.id != ctx.cache.current_user().id
-                {
-                    data.dc_event_tx
-                        .send(FromDiscordEvent {
-                            username: new_message.author.name.clone(),
-                            content: new_message.content.clone(),
-                        })
-                        .await?;
-                }
+            if target_channels.contains(&new_message.channel_id)
+                && new_message.author.id != ctx.cache.current_user().id
+            {
+                data.dc_event_tx
+                    .send(FromDiscordEvent {
+                        username: new_message.author.name.clone(),
+                        content: new_message.content.clone(),
+                    })
+                    .await?;
             }
         }
         _ => {}
     }
     Ok(())
+}
+
+fn create_welcome_embed(
+    new_member: &serenity::Member,
+    ctx: &serenity::Context,
+) -> serenity::CreateEmbed {
+    serenity::CreateEmbed::new()
+        .title("💥 A New Target Approaches! 💥")
+        .description(format!(
+            "Welcome to the server, {}! Let's hope things don't get too... explosive. 🤫",
+            new_member.mention()
+        ))
+        .color(0x9b59b6)
+        .thumbnail("https://i.pinimg.com/originals/5d/15/4b/5d154b68de57a87600fe9b98d692802c.gif")
+        .footer(serenity::CreateEmbedFooter::new(format!(
+            "Member Count: #{}",
+            new_member
+                .guild_id
+                .to_guild_cached(ctx)
+                .map(|g| g.member_count)
+                .unwrap_or(0)
+        )))
 }
 
 fn ping_help() -> String {
@@ -326,21 +340,6 @@ pub async fn help(ctx: Context<'_>, command_name: Option<String>) -> anyhow::Res
         return Ok(());
     }
 
-    // works
-    // let mut embed_fields = Vec::new();
-    // for command in &ctx.framework().options().commands {
-    //     let description = command
-    //         .description
-    //         .as_deref()
-    //         .unwrap_or("No description provided.");
-    //     embed_fields.push((
-    //         format!("`~{}`", command.name),
-    //         description.to_string(),
-    //         false,
-    //     ));
-    // }
-    //
-    // but instead do
     let embed_fields = ctx.framework().options().commands.iter().map(|command| {
         let description = command
             .description
@@ -396,3 +395,20 @@ async fn reply_command_help(ctx: Context<'_>, command_name: &str) -> anyhow::Res
     .await?;
     Ok(())
 }
+
+// Show this menu
+// #[poise::command(prefix_command, track_edits, slash_command)]
+// pub async fn help(
+//     ctx: Context<'_>,
+//     #[description = "Specific command to show help about"] command: Option<String>,
+// ) -> Result<(), Error> {
+//     let config = poise::builtins::PrettyHelpConfiguration {
+//         extra_text_at_bottom: "\
+// Type ~help command for more info on a command.
+// You can edit your message to the bot and the bot will edit its response.",
+//         ephemeral: true,
+//         ..Default::default()
+//     };
+//     poise::builtins::pretty_help(ctx, command.as_deref(), config).await?;
+//     Ok(())
+// }
