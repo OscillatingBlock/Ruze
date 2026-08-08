@@ -15,6 +15,7 @@ use tracing::{debug, info, instrument};
 mod discord_bot;
 mod event_handler;
 mod mc_log;
+mod storage;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

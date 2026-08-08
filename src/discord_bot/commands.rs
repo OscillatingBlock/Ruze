@@ -1,10 +1,11 @@
 use poise::serenity_prelude as serenity;
 use serenity::all::Mentionable;
-use tracing::info;
+use tracing::{error, info};
 
 use std::env;
 
 use crate::discord_bot::FromDiscordEvent;
+use crate::storage;
 use anyhow::Result;
 use rust_mc_status::{ServerData, ServerEdition};
 
@@ -220,25 +221,20 @@ pub async fn info(ctx: Context<'_>) -> Result<(), Error> {
 )]
 pub async fn start_bridge(ctx: Context<'_>) -> Result<(), Error> {
     let current_channel_id = ctx.channel_id();
-    // let shared_list = &ctx.data().target_channel_id_list;
-    //
-    // {
-    //     let mut lock = shared_list.write().await;
-    //     if let Some(ref mut channels) = *lock {
-    //         if !channels.contains(&current_channel_id) {
-    //             channels.push(current_channel_id);
-    //         }
-    //     } else {
-    //         *lock = Some(vec![current_channel_id]);
-    //     }
-    // }
 
-    {
+    let added = {
         let mut lock = ctx.data().target_channel_id_list.write().await;
         let channels = lock.get_or_insert_with(Vec::new);
         if !channels.contains(&current_channel_id) {
             channels.push(current_channel_id);
+            true
+        } else {
+            false
         }
+    };
+
+    if added {
+        persist_bridge_channels(ctx.data()).await;
     }
 
     ctx.say(format!(
@@ -254,22 +250,25 @@ pub async fn stop_bridge(ctx: Context<'_>) -> Result<(), Error> {
     let current_channel_id = ctx.channel_id();
     let shared_list = &ctx.data().target_channel_id_list;
 
-    let mut lock = shared_list.write().await;
-    let was_bridged = if let Some(ref mut channels) = *lock {
-        if let Some(index) = channels.iter().position(|&id| id == current_channel_id) {
-            channels.remove(index);
-            if channels.is_empty() {
-                *lock = None;
+    let was_bridged = {
+        let mut lock = shared_list.write().await;
+        if let Some(ref mut channels) = *lock {
+            if let Some(index) = channels.iter().position(|&id| id == current_channel_id) {
+                channels.remove(index);
+                if channels.is_empty() {
+                    *lock = None;
+                }
+                true
+            } else {
+                false
             }
-            true
         } else {
             false
         }
-    } else {
-        false
     };
 
     if was_bridged {
+        persist_bridge_channels(ctx.data()).await;
         ctx.send(
             poise::CreateReply::default().embed(
                 serenity::CreateEmbed::new()
@@ -281,9 +280,21 @@ pub async fn stop_bridge(ctx: Context<'_>) -> Result<(), Error> {
             ),
         )
         .await?;
-    } else {
     }
     Ok(())
+}
+
+async fn persist_bridge_channels(data: &Data) {
+    let channels: Vec<u64> = {
+        let lock = data.target_channel_id_list.read().await;
+        lock.as_ref()
+            .map(|channels| channels.iter().map(|c| c.get()).collect())
+            .unwrap_or_default()
+    };
+
+    if let Err(why) = storage::save_bridge_channels(&data.storage_path, &channels).await {
+        error!("Failed to persist bridge channels: {why:#}");
+    }
 }
 
 async fn is_owner_or_admin(ctx: Context<'_>) -> Result<bool, Error> {

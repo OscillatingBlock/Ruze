@@ -23,6 +23,7 @@ pub struct Data {
     pub dc_event_tx: Sender<FromDiscordEvent>,
     pub mc_status_client: McClient,
     pub target_channel_id_list: Arc<RwLock<Option<Vec<serenity::ChannelId>>>>,
+    pub storage_path: String,
     pub rcon_client: Arc<Mutex<RconClient>>,
 }
 
@@ -37,7 +38,23 @@ pub async fn start_discord_bot(
 ) -> anyhow::Result<()> {
     // init variables
     debug!("Initializing Discord bot shared data...");
-    let bridge_channel_list = Arc::new(RwLock::new(None));
+
+    let storage_path = env::var("BRIDGE_STORAGE_PATH")
+        .unwrap_or_else(|_| crate::storage::DEFAULT_BRIDGE_STORAGE_PATH.to_string());
+    debug!(storage_path = %storage_path, "Loading persisted bridge channels...");
+    let persisted_channels = crate::storage::load_bridge_channels(&storage_path).await?;
+    let initial_bridge_list = if persisted_channels.is_empty() {
+        None
+    } else {
+        Some(
+            persisted_channels
+                .into_iter()
+                .map(serenity::ChannelId::new)
+                .collect(),
+        )
+    };
+
+    let bridge_channel_list = Arc::new(RwLock::new(initial_bridge_list));
     let mc_status_client = McClient::new()
         .with_timeout(Duration::from_secs(5))
         .with_max_parallel(10);
@@ -45,6 +62,7 @@ pub async fn start_discord_bot(
     let data = Data {
         target_channel_id_list: bridge_channel_list.clone(),
         dc_event_tx,
+        storage_path: storage_path.clone(),
         mc_status_client,
         rcon_client,
     };
@@ -70,7 +88,7 @@ pub async fn start_discord_bot(
     discord_client
         .start()
         .await
-        .with_context(|| format!("Error while starting discord bot"))?;
+        .with_context(|| "Error while starting discord bot".to_string())?;
 
     Ok(())
 }

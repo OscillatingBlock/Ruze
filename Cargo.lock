@@ -1087,6 +1087,8 @@ dependencies = [
  "poise",
  "regex",
  "rust-mc-status",
+ "serde",
+ "serde_json",
  "serenity",
  "tokio",
  "tracing",
