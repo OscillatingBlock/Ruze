@@ -101,38 +101,9 @@ fn parse_log_line(line: &str) -> Option<MinecraftEvent> {
                 system_message: payload.to_string(),
             });
         }
-
-        let is_death = payload.contains("was slain by")
-            || payload.contains("was smashed by")
-            || payload.contains("was impaled by")
-            || payload.contains("was shot by")
-            || payload.contains("was pummeled by")
-            || payload.contains("was blown up by")
-            || payload.contains("was skewered by")
-            || payload.contains("was spit at by")
-            || payload.contains("was struck by lightning")
-            || payload.contains("was frozen to death")
-            || payload.contains("was squashed by")
-            || payload.contains("was squished too much")
-            || payload.contains("was poked to death")
-            || payload.contains("was pricked to death")
-            || payload.contains("was doomed to fall")
-            || payload.contains("fell from a high place")
-            || payload.contains("hit the ground too hard")
-            || payload.contains("fell out of the world")
-            || payload.contains("didn't want to live")
-            || payload.contains("experienced kinetic energy")
-            || payload.contains("drowned")
-            || payload.contains("suffocated in a wall")
-            || payload.contains("starved to death")
-            || payload.contains("burned to death")
-            || payload.contains("went up in flames")
-            || payload.contains("tried to swim in lava")
-            || payload.contains("discovered the floor was lava")
-            || payload.contains("withered away")
-            || payload.contains("killed by magic")
-            || payload.contains("froze ")
-            || payload.contains("left the confines of this world");
+        let is_death = DEATH_SENTENCES
+            .iter()
+            .any(|&sentence| payload.contains(sentence));
 
         if is_death {
             return Some(MinecraftEvent::Death {
@@ -143,3 +114,37 @@ fn parse_log_line(line: &str) -> Option<MinecraftEvent> {
 
     None
 }
+
+pub const DEATH_SENTENCES: &[&str] = &[
+    "was slain by",
+    "was smashed by",
+    "was impaled by",
+    "was shot by",
+    "was pummeled by",
+    "was blown up by",
+    "was skewered by",
+    "was spit at by",
+    "was struck by lightning",
+    "was frozen to death",
+    "was squashed by",
+    "was squished too much",
+    "was poked to death",
+    "was pricked to death",
+    "was doomed to fall",
+    "fell from a high place",
+    "hit the ground too hard",
+    "fell out of the world",
+    "didn't want to live",
+    "experienced kinetic energy",
+    "drowned",
+    "suffocated in a wall",
+    "starved to death",
+    "burned to death",
+    "went up in flames",
+    "tried to swim in lava",
+    "discovered the floor was lava",
+    "withered away",
+    "killed by magic",
+    "froze ",
+    "left the confines of this world",
+];
